@@ -72,20 +72,117 @@ mosaicplot(table(full$FsizeD, full$Survived), main='Family Size by Survival', sh
 # Extract data from cabin column.
 full$Deck <- factor(sapply(full$Cabin, function(x) strsplit(x, NULL)[[1]][1]))
 
+# Dealing with missing values.
+# Fill passenger 62 and 830 on embarked column.
+full[c(62, 830), 'Embarked']
 
+# Get rid of missing passenger ID's. %>% passes the values to the df on the left.
+embark_fare <- full %>%
+  filter(PassengerId != 62 & PassengerId != 830)
 
+# Use ggplot2 to visualise embarkment, passenger class and median fare.
+ggplot(embark_fare, aes(x=Embarked, y=Fare, fill=factor(Pclass))) +
+  geom_boxplot() +
+  geom_hline(aes(yintercept=80),
+             colour='red', linetype='dashed', lwd=2) +
+  scale_y_continuous(labels=dollar_format()) +
+  theme_few()
 
+# Fix some rows.
+# Since their fair was only 80$ for first class it's likely wrong.
+full$Embarked[c(62, 830)] <- 'C'
 
+# Show row 1044.
+full[1044,]
 
+# Visualise all class 3 and embarked S samples.
+ggplot(full[full$Pclass == '3' & full$Embarked == 'S',],
+       aes(x=Fare)) +
+  geom_density(fill='#99d6ff', alpha=0.4) +
+  geom_vline(aes(xintercept=median(Fare, na.rm=T)),
+             colour='red', linetype='dashed', lwd=1) +
+  scale_x_continuous(labels=dollar_format()) +
+  theme_few()
 
+# Replace missing fare values with median value.
+full$Fare[1044] <- median(full[full$Pclass == '3' & full$Embarked == 'S', ]$Fare, na.rm=TRUE)
 
+# Creating predictions.
+# Show number of NaNs.
+sum(is.na(full$Age))
 
+# Fill missing values with multiple imputation using chained equations.
+# Make variables into factors.
+factor_vars <- c('Passenger_id', 'Pclass', 'Sex', 'Embarked',
+                 'Title', 'Surname', 'Family', 'FsizeD')
 
+full[factor_vars] <- lapply(full[factor_vars], function(x) as.factor(x))
 
+# Set a random seed.
+set.seed(129)
 
+# Perform mice imputation, excluding certain, less than useful vars.
+mice_mod <- mice(full[, !names(full) %in% c('PassengerId', 'Name', 'Ticket', 'Cabin', 'Family', 'Surname', 'Survived'
+                                            )], method='rf')
 
+# Save output
+mice_output <- complete(mice_mod)
 
+# Plot age distributions.
+par(mfrow=c(1,2))
+hist(full$Age, freq=F, main='Age of Original Data',
+     col='darkgreen', ylim=c(0, 0.04))
+hist(mice_output$Age, freq=F, main='Age: MICE output', 
+     col='lightgreen', ylim=c(0, 0.04))
 
+# Replace age in original data with age from mice model.
+full$Age <- mice_output$Age
+
+# Show number of missing vals.
+sum(is.na(full$Age))
+
+# More feature engineering.
+# Look at the relationship between age and survival.
+ggplot(full[1:891,], aes(Age, fill=factor(Survived))) +
+  geom_histogram() +
+  facet_grid(.~Sex) +
+  theme_few()
+
+# Create another column to indicate whether child or adult.
+full$Child[full$Age < 18] <- 'Child'
+full$Child[full$Age >= 18] <- 'Adult'
+
+# Show counts.
+table(full$Child, full$Survived)
+
+# Adding mother variable.
+full$Mother <- 'Not Mother'
+full$Mother[full$Sex == 'female' & full$Parch > 0 & full$Age > 18 & full$Title != 'Miss'] <- 'Mother'
+
+# Show counts.
+table(full$Mother, full$Survived)
+
+# Finish by factorising our two variables.
+full$Child <- factor(full$Child)
+full$Mother <- factor(full$Mother)
+md.pattern(full)
+# Predictions.
+# Split into train and test sets.
+train <- full[1:891,]
+test <- full[892:1309,]
+
+# Building the model.
+# Set a random seed.
+set.seed(754)
+
+# Build the model
+rf_model <- randomForest(factor(Survived) ~ Pclass + Sex + Age + SibSp + Parch +
+                           Fare + Embarked + Title + FsizeD + Child + Mother,
+                         data=train)
+
+# Show model error.
+plot(rf_model, ylim=c(0, 0.36))
+legend('topright', colnames(rf_model$err.rate), col=1:3, fill=1:3)
 
 
 
